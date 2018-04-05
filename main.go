@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
+	"log"
 	"net/http"
 	"os"
-	"strings"
+	"strconv"
 )
 
 var httpClient = http.Client{}
@@ -13,28 +14,43 @@ var targetURL string
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: pl0xy <target>")
-		os.Exit(1)
+		printUsage()
 	}
+
 	targetURL = os.Args[1]
 	if targetURL[len(targetURL)-1] == '/' {
 		// strip final slash if it's there
 		targetURL = targetURL[:len(targetURL)-1]
 	}
 
+	port := 4444
+	if len(os.Args) > 2 {
+		parsedArg, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Println("Error parsing port argument")
+			printUsage()
+		}
+		port = parsedArg
+	}
+
+	log.Printf("Target: %s", targetURL)
+	log.Printf("Listening for requests on port %d", port)
+
 	// set up routing
 	http.HandleFunc("/", pl0xyHandler)
-	http.ListenAndServe(":3001", nil)
+	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+}
+
+func printUsage() {
+	fmt.Println("Usage: pl0xy <target> [port (default 4444)]")
+	os.Exit(1)
 }
 
 func pl0xyHandler(w http.ResponseWriter, r *http.Request) {
-	// get route, query, headers
-	route := r.URL.Path
-	query := r.URL.RawQuery
-	headers := r.Header
-
 	// generate target url
-	url := fmt.Sprintf("%s%s?%s", targetURL, route, query)
+	url := fmt.Sprintf("%s%s?%s", targetURL, r.URL.Path, r.URL.RawQuery)
+
+	log.Printf("%s %s Content-Length: %d", r.Method, url, r.ContentLength)
 
 	// send request to target
 	res, err := func() (*http.Response, error) {
@@ -44,7 +60,7 @@ func pl0xyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// set the headers
-		req.Header = headers
+		req.Header = r.Header
 
 		// make the request
 		return httpClient.Do(req)
@@ -56,17 +72,19 @@ func pl0xyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := ioutil.ReadAll(res.Body)
-	res.Body.Close()
+	// set headers on response to headers we received
+	for k, v := range res.Header {
+		w.Header().Set(k, v[0])
+	}
+
+	// set status code to status code we received
+	w.WriteHeader(res.StatusCode)
+
+	// write body to caller
+	_, err = io.Copy(w, res.Body)
+	defer res.Body.Close()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-
-	// send back the response
-	for k, v := range res.Header {
-		w.Header().Set(k, strings.Join(v, ""))
-	}
-	w.WriteHeader(res.StatusCode)
-	w.Write(response)
 }

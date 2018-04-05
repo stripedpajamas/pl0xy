@@ -5,4 +5,6 @@
 
 
 ### usage
-`pl0xy <target>`
+`pl0xy <target> [port]`
+
+port defaults to 4444
